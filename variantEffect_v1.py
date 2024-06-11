@@ -1,97 +1,100 @@
-import requests
 import pandas as pd
+import requests
 import sys
 import argparse
 from time import sleep
 import xlsxwriter 
 
+# Function to fetch variant annotation from myvariant.info API
+def fetchVariantAnnotation(variantId):
+    # Construct URL for the variant
+    baseUrl = "http://myvariant.info/v1/variant/"
+    url = "{}{}?fields=snpeff".format(baseUrl, variantId)
 
-def fetch_variant_annotation(variant_id):
-    base_url = "http://myvariant.info/v1/variant/"
-    url = "{}{}?fields=snpeff".format(base_url, variant_id)
-
-
-    for attempt in range(2):  # Try twice before giving up
+    # Try twice before giving up
+    for attempt in range(2):
         try:
+            # Send GET request to the API
             response = requests.get(url)
-            response.raise_for_status()
-            return response.json()
+            response.raise_for_status()  # Raise HTTPError for bad responses
+            return response.json()  # Return JSON response
         except requests.RequestException as e:
-            print("Attempt " + str(attempt+1) + " failed for " + variant_id + ": " + str(e))
+            # Retry if request fails
+            print("Attempt " + str(attempt+1) + " failed for " + variantId + ": " + str(e))
             if attempt == 0:
                 sleep(1)  # Wait 1 second before retrying
-    print("Skipping {} after two failed attempts.".format(variant_id))
+    # Print message if failed after two attempts
+    print("Skipping {} after two failed attempts.".format(variantId))
     return None
 
-def convert_to_dataframe(data, maf_data):
-    # Check if data is None (indicating failed attempts to fetch variant annotation)
+# Function to convert variant annotation data to DataFrame
+def convertToDataFrame(data, mafData):
     if data is None:
         return None
 
-    # Extract variant ID from the data dictionary
-    variant_id = data['_id']
-
-    # Extract the list of annotations from the 'snpeff' dictionary
+    # Extract variant ID
+    variantId = data['_id']
+    # Extract annotations
     annotations = data['snpeff']['ann']
   
-    # Check if annotations is a dictionary, convert to list if needed
     if isinstance(annotations, dict):
         annotations = [annotations]
 
-    # Create an empty list to store annotation data as dictionaries
-    annotation_data = []
+    annotationData = []
 
-    # Loop through each annotation in the list and create dictionaries
+    # Convert annotations to dictionary format
     for annotation in annotations:
-        annotation_dict = {
+        annotationDict = {
             "effect": annotation.get("effect"),
-            "feature_id": annotation.get("feature_id"),
-            "feature_type": annotation.get("feature_type"),
-            "gene_id": annotation.get("gene_id"),
-            "genename": annotation.get("genename"),
-            "hgvs_c": annotation.get("hgvs_c"),
-            "putative_impact": annotation.get("putative_impact"),
-            "rank": annotation.get("rank"),  # Use get() with default value
-            "total": annotation.get("total"),  # Use get() with default value
-            "transcript_biotype": annotation.get("transcript_biotype"),
-            "variant_id": variant_id,
-            "maf": maf_data  # Add MAF data to the DataFrame
+            "featureId": annotation.get("feature_id"),
+            "featureType": annotation.get("feature_type"),
+            "geneId": annotation.get("gene_id"),
+            "geneName": annotation.get("genename"),
+            "hgvsC": annotation.get("hgvs_c"),
+            "putativeImpact": annotation.get("putative_impact"),
+            "rank": annotation.get("rank"),  
+            "total": annotation.get("total"),  
+            "transcriptBiotype": annotation.get("transcript_biotype"),
+            "variantId": variantId,
+            "maf": mafData  
         }
-        annotation_data.append(annotation_dict)
+        annotationData.append(annotationDict)
 
-    # Create the DataFrame from the list of annotation dictionaries
-    df_annotation = pd.DataFrame(annotation_data)
+    # Create DataFrame from annotation data
+    dfAnnotation = pd.DataFrame(annotationData)
 
-    return df_annotation
+    return dfAnnotation
 
-def process_variant_row(row):
-    variant_id = "{}:g.{}{}>{}".format(row['Chr'], row['Position'], row['Ref'], row['ALT'] if pd.notnull(row['ALT']) else '')
-    print(variant_id)
+# Function to process a row of variant data
+def processVariantRow(row):
+    # Construct variant ID
+    variantId = "{}:g.{}{}>{}".format(row['Chr'], row['Position'], row['Ref'], row['ALT'] if pd.notnull(row['ALT']) else '')
     
     highImpactVariants = []
     
-    annotation_data = fetch_variant_annotation(variant_id)
-    maf_data = fetch_maf(variant_id)
-    print("jonas")
-    print(maf_data)
-    print(type(maf_data))
-    df_annotation = convert_to_dataframe(annotation_data, maf_data)
-    if df_annotation is None:
-        print("Skipping {} because DataFrame cannot be created from annotation data.".format(variant_id))
+    # Fetch variant annotation data
+    annotationData = fetchVariantAnnotation(variantId)
+    mafData = fetchMaf(variantId)
+    
+    # Convert annotation data to DataFrame
+    dfAnnotation = convertToDataFrame(annotationData, mafData)
+    if dfAnnotation is None:
+        print("Skipping {} because DataFrame cannot be created from annotation data.".format(variantId))
         return None
-    print(df_annotation)
-    for _, ann_row in df_annotation.iterrows():
-        if ann_row['maf'] == None:
-            highImpactVariants.append(ann_row)
-        if ann_row["maf"] is not None and ann_row["maf"] < 0.001 and ann_row["putative_impact"] == "HIGH":
-            highImpactVariants.append(ann_row)
+    
+    # Filter high impact variants
+    for _, annRow in dfAnnotation.iterrows():
+        if annRow['maf'] is None:
+            highImpactVariants.append(annRow)
+        if annRow["maf"] is not None and annRow["maf"] < 0.001 and annRow["putativeImpact"] == "HIGH":
+            highImpactVariants.append(annRow)
 
     return highImpactVariants
 
-
-def fetch_maf(variant_id):
-    base_url = "http://myvariant.info/v1/variant/"
-    url = "{}{}?fields=exac.alleles,exac.af".format(base_url, variant_id)
+# Function to fetch minor allele frequency (MAF) from ExAC API
+def fetchMaf(variantId):
+    baseUrl = "http://myvariant.info/v1/variant/"
+    url = "{}{}?fields=exac.alleles,exac.af".format(baseUrl, variantId)
     response = requests.get(url)
     if response.status_code == 200:
         data = response.json()
@@ -99,96 +102,69 @@ def fetch_maf(variant_id):
             return data['exac']['af']
     return None
 
-
-
-def read_variants_file(input_file):
+# Function to read variants data from input file
+def readVariantsFile(inputFile):
     try:
-        return pd.read_csv(input_file, sep='\t')
+        return pd.read_csv(inputFile, sep='\t')
     except FileNotFoundError:
-        print("Error: The input file '{0}' was not found.".format(input_file))
-        print_usage()
+        print("Error: The input file '{0}' was not found.".format(inputFile))
         sys.exit(1)
 
-def annotate_variants(input_file, output_file):
-    df = read_variants_file(input_file)
+# Function to annotate variants and save the result
+def annotateVariants(inputFile, outputFile):
+    df = readVariantsFile(inputFile)
+    allHighImpactVariants = []
 
-    annotated_variants = []
-
-
+    # Process each row in the input data
     for _, row in df.iterrows():
-        annotated_variant = process_variant_row(row)
-        if annotated_variant:
-            annotated_variants.append(annotated_variant)
-            print(annotate_variants)
+        highImpactVariants = processVariantRow(row)
+        if highImpactVariants:
+            allHighImpactVariants.extend(highImpactVariants)
 
-    if annotated_variants:
-        annotated_df = pd.DataFrame(annotated_variants)
-        annotated_df.to_csv(output_file, sep='\t', index=False)
+    # Save annotated variants to output file
+    if allHighImpactVariants:
+        annotatedDf = pd.DataFrame(allHighImpactVariants)
+        annotatedDf = cleanData(annotatedDf)
+        annotatedDf.to_csv(outputFile, sep='\t', index=False)
+        saveAsExcel(annotatedDf, outputFile)
     else:
         print("No variants with 'HIGH' impact found.")
 
+# Function to clean DataFrame column names and order
 def cleanData(df):
-    # Rename columns for better readability
     df.rename(columns={
         "effect": "Effect",
-        "feature_id": "Feature ID",
-        "feature_type": "Feature Type",
-        "gene_id": "Gene ID",
-        "genename": "Gene Name",
-        "hgvs_c": "HGVS.c",
-        "putative_impact": "Putative Impact",
+        "featureId": "Feature ID",
+        "featureType": "Feature Type",
+        "geneId": "Gene ID",
+        "geneName": "Gene Name",
+        "hgvsC": "HGVS.c",
+        "putativeImpact": "Putative Impact",
         "rank": "Rank",
         "total": "Total",
-        "transcript_biotype": "Transcript Biotype",
-        "variant_id": "Variant ID",
-        "maf": "maf"
+        "transcriptBiotype": "Transcript Biotype",
+        "variantId": "Variant ID",
+        "maf": "MAF"
     }, inplace=True)
     
-    # Sort columns to a more logical order
-    column_order = ["Variant ID", "Gene ID", "Gene Name", "Feature ID","Putative Impact", "maf", "Feature Type", "Effect", "HGVS.c", "Rank", "Total", "Transcript Biotype"]
-    df = df[column_order]
+    columnOrder = ["Variant ID", "Gene ID", "Gene Name", "Feature ID","Putative Impact", "MAF", "Feature Type", "Effect", "HGVS.c", "Rank", "Total", "Transcript Biotype"]
+    df = df[columnOrder]
 
     return df
-def save_as_excel(df, output_file):
-    with pd.ExcelWriter(output_file, engine='xlsxwriter') as writer:
+
+# Function to save DataFrame to Excel file
+def saveAsExcel(df, outputFile):
+    with pd.ExcelWriter(outputFile, engine='xlsxwriter') as writer:
         df.to_excel(writer, sheet_name='Annotated Variants', index=False)
 
-def annotate_variants(input_file, output_file):
-    df = read_variants_file(input_file)
-
-    all_high_impact_variants = []
-
-    for _, row in df.iterrows():
-        high_impact_variants = process_variant_row(row)
-        if high_impact_variants:
-            all_high_impact_variants.extend(high_impact_variants)
-
-    if all_high_impact_variants:
-        annotated_df = pd.DataFrame(all_high_impact_variants)
-        annotated_df = cleanData(annotated_df)
-        annotated_df.to_csv(output_file, sep='\t', index=False)
-        save_as_excel(annotated_df, output_file)
-
-    else:
-        print("No variants with 'HIGH' impact found.")
-
-def print_usage():
-    print("Usage: python annotate_variants.py [-h] input_file output_file")
-    print("Annotate genomic variants with snpEff annotations from myvariant.info.")
-    print()
-    print("Positional arguments:")
-    print("  input_file   Path to the input file containing variants.")
-    print("  output_file  Path to the output file to save annotated variants.")
-    print()
-    print("Optional arguments:")
-    print("  -h, --help   Show this help message and exit.")
-
+# Main function to parse command line arguments and run the annotation process
 def main():
     parser = argparse.ArgumentParser(description='Annotate genomic variants with snpEff annotations from myvariant.info.')
-    parser.add_argument('input_file', type=str, help='Path to the input file containing variants.')
-    parser.add_argument('output_file', type=str, help='Path to the output file to save annotated variants.')
+    parser.add_argument('inputFile', type=str, help='Path to the input file containing variants.')
+    parser.add_argument('outputFile', type=str, help='Path to the output file to save annotated variants.')
     args = parser.parse_args()
-    annotate_variants(args.input_file, args.output_file)
+    annotateVariants(args.inputFile, args.outputFile)
 
+# Entry point of the script
 if __name__ == "__main__":
     main()
