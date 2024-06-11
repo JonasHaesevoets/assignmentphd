@@ -23,47 +23,46 @@ def fetch_variant_annotation(variant_id):
     print("Skipping {} after two failed attempts.".format(variant_id))
     return None
 
-def convert_to_dataframe(data):
-  # Check if data is None (indicating failed attempts to fetch variant annotation)
-  if data is None:
-    return None
+def convert_to_dataframe(data, maf_data):
+    # Check if data is None (indicating failed attempts to fetch variant annotation)
+    if data is None:
+        return None
 
-  # Extract variant ID from the data dictionary
-  variant_id = data['_id']
+    # Extract variant ID from the data dictionary
+    variant_id = data['_id']
 
-  # Extract the list of annotations from the 'snpeff' dictionary
-  annotations = data['snpeff']['ann']
+    # Extract the list of annotations from the 'snpeff' dictionary
+    annotations = data['snpeff']['ann']
   
-  # Check if annotations is a dictionary, convert to list if needed
-  if isinstance(annotations, dict):
-    annotations = [annotations]
+    # Check if annotations is a dictionary, convert to list if needed
+    if isinstance(annotations, dict):
+        annotations = [annotations]
 
-  # Create an empty list to store annotation data as dictionaries
-  annotation_data = []
+    # Create an empty list to store annotation data as dictionaries
+    annotation_data = []
 
-  # Loop through each annotation in the list and create dictionaries
-  # changed it annotation.get because for last one rank and total are not given, this way no key error exceptions are returned
-  for annotation in annotations:
-    annotation_data.append({
-        "effect": annotation.get("effect"),
-        "feature_id": annotation.get("feature_id"),
-        "feature_type": annotation.get("feature_type"),
-        "gene_id": annotation.get("gene_id"),
-        "genename": annotation.get("genename"),
-        "hgvs_c": annotation.get("hgvs_c"),
-        "putative_impact": annotation.get("putative_impact"),
-        "rank": annotation.get("rank"),  # Use get() with default value
-        "total": annotation.get("total"),  # Use get() with default value
-        "transcript_biotype": annotation.get("transcript_biotype")
-    })
+    # Loop through each annotation in the list and create dictionaries
+    for annotation in annotations:
+        annotation_dict = {
+            "effect": annotation.get("effect"),
+            "feature_id": annotation.get("feature_id"),
+            "feature_type": annotation.get("feature_type"),
+            "gene_id": annotation.get("gene_id"),
+            "genename": annotation.get("genename"),
+            "hgvs_c": annotation.get("hgvs_c"),
+            "putative_impact": annotation.get("putative_impact"),
+            "rank": annotation.get("rank"),  # Use get() with default value
+            "total": annotation.get("total"),  # Use get() with default value
+            "transcript_biotype": annotation.get("transcript_biotype"),
+            "variant_id": variant_id,
+            "maf": maf_data  # Add MAF data to the DataFrame
+        }
+        annotation_data.append(annotation_dict)
 
-  # Create the DataFrame from the list of annotation dictionaries
-  df_annotation = pd.DataFrame(annotation_data)
+    # Create the DataFrame from the list of annotation dictionaries
+    df_annotation = pd.DataFrame(annotation_data)
 
-  # Add a column for the variant ID
-  df_annotation['variant_id'] = variant_id
-
-  return df_annotation
+    return df_annotation
 
 def process_variant_row(row):
     variant_id = "{}:g.{}{}>{}".format(row['Chr'], row['Position'], row['Ref'], row['ALT'] if pd.notnull(row['ALT']) else '')
@@ -72,19 +71,33 @@ def process_variant_row(row):
     highImpactVariants = []
     
     annotation_data = fetch_variant_annotation(variant_id)
-    
-    df_annotation = convert_to_dataframe(annotation_data)
+    maf_data = fetch_maf(variant_id)
+    print("jonas")
+    print(maf_data)
+    print(type(maf_data))
+    df_annotation = convert_to_dataframe(annotation_data, maf_data)
     if df_annotation is None:
         print("Skipping {} because DataFrame cannot be created from annotation data.".format(variant_id))
         return None
     print(df_annotation)
-    
     for _, ann_row in df_annotation.iterrows():
-        if ann_row['putative_impact'] == 'HIGH':
+        if ann_row['maf'] == None:
             highImpactVariants.append(ann_row)
-    
+        if ann_row["maf"] is not None and ann_row["maf"] < 0.001 and ann_row["putative_impact"] == "HIGH":
+            highImpactVariants.append(ann_row)
+
     return highImpactVariants
 
+
+def fetch_maf(variant_id):
+    base_url = "http://myvariant.info/v1/variant/"
+    url = "{}{}?fields=exac.alleles,exac.af".format(base_url, variant_id)
+    response = requests.get(url)
+    if response.status_code == 200:
+        data = response.json()
+        if 'exac' in data and 'af' in data['exac']:
+            return data['exac']['af']
+    return None
 
 
 
@@ -127,11 +140,12 @@ def cleanData(df):
         "rank": "Rank",
         "total": "Total",
         "transcript_biotype": "Transcript Biotype",
-        "variant_id": "Variant ID"
+        "variant_id": "Variant ID",
+        "maf": "maf"
     }, inplace=True)
     
     # Sort columns to a more logical order
-    column_order = ["Variant ID", "Gene ID", "Gene Name", "Feature ID", "Feature Type", "Effect", "Putative Impact", "HGVS.c", "Rank", "Total", "Transcript Biotype"]
+    column_order = ["Variant ID", "Gene ID", "Gene Name", "Feature ID","Putative Impact", "maf", "Feature Type", "Effect", "HGVS.c", "Rank", "Total", "Transcript Biotype"]
     df = df[column_order]
 
     return df
