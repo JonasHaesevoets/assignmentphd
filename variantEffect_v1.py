@@ -73,20 +73,20 @@ def processVariantRow(row):
     highImpactVariants = []
     
     # Fetch variant annotation data
-    annotationData = fetchVariantAnnotation(variantId)
-    mafData = fetchMaf(variantId)
+    annotationData = fetchVariantAnnotation(variantId) # store the annotation data for the snpeff information for the variant at hand
+    mafData = fetchMaf(variantId) # store the annotation data for the af information for the variant at hand
     
     # Convert annotation data to DataFrame
     dfAnnotation = convertToDataFrame(annotationData, mafData)
-    if dfAnnotation is None:
+    if dfAnnotation is None: # added to handle cases when the myvariant.info webpage could not be accessed
         print("Skipping {} because DataFrame cannot be created from annotation data.".format(variantId))
         return None
     
     # Filter high impact variants
     for _, annRow in dfAnnotation.iterrows():
         if annRow['maf'] is None:
-            highImpactVariants.append(annRow)
-        if annRow["maf"] is not None and annRow["maf"] < 0.001 and annRow["putativeImpact"] == "HIGH":
+            highImpactVariants.append(annRow) # add the novel variants to highImpactVariants
+        if annRow["maf"] is not None and annRow["maf"] < 0.001 and annRow["putativeImpact"] == "HIGH": # only add the transcripts for each variants who are rare and have a high impact to highImpactVariants
             highImpactVariants.append(annRow)
 
     return highImpactVariants
@@ -99,7 +99,7 @@ def fetchMaf(variantId):
     if response.status_code == 200:
         data = response.json()
         if 'exac' in data and 'af' in data['exac']:
-            return data['exac']['af']
+            return data['exac']['af'] # returns the af value from the nested dictionary
     return None
 
 # Function to read variants data from input file
@@ -112,7 +112,7 @@ def readVariantsFile(inputFile):
 
 # Function to annotate variants and save the result
 def annotateVariants(inputFile, outputFile):
-    df = readVariantsFile(inputFile)
+    df = readVariantsFile(inputFile) #read the variants.txt in
     allHighImpactVariants = []
 
     # Process each row in the input data
@@ -123,10 +123,9 @@ def annotateVariants(inputFile, outputFile):
 
     # Save annotated variants to output file
     if allHighImpactVariants:
-        annotatedDf = pd.DataFrame(allHighImpactVariants)
-        annotatedDf = cleanData(annotatedDf)
-        annotatedDf.to_csv(outputFile, sep='\t', index=False)
-        saveAsExcel(annotatedDf, outputFile)
+        annotatedDf = pd.DataFrame(allHighImpactVariants) # convert the high impact variants to a dataframe
+        annotatedDf = cleanData(annotatedDf) # clean the dataframe to make it easier to read
+        saveAsExcel(annotatedDf, outputFile) # save as excel
     else:
         print("No variants with 'HIGH' impact found.")
 
@@ -159,7 +158,10 @@ def saveAsExcel(df, outputFile):
 
 # Main function to parse command line arguments and run the annotation process
 def main():
-    parser = argparse.ArgumentParser(description='Annotate genomic variants with snpEff annotations from myvariant.info.')
+    parser = argparse.ArgumentParser(description='Annotate genomic variants with snpEff and allele frequency annotations from myvariant.info.'
+                                     "\n The algorithm queries the myvariant.info website in order to provide the annotations."
+                                     "\n After that an excel file is returned containing only rare + high impact (transcripts of) variants and novel variants."
+                                     "\n Only retains rare + high impact variants and novel variants")
     parser.add_argument('inputFile', type=str, help='Path to the input file containing variants.')
     parser.add_argument('outputFile', type=str, help='Path to the output file to save annotated variants.')
     args = parser.parse_args()
